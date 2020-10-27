@@ -56,7 +56,7 @@ fn nnet_train(
     let mut skip_prints_i = 0;
     let mut sample_iter = sample.get_iter();
     let mut mode: char = 'c';
-    const PRINT_PERIOD_MILLIS: u32 = 100;
+    const PRINT_PERIOD_MILLIS: u32 = 1000;
     let mut buf_writer = io::BufWriter::new(if log {
         File::create("passes_log.txt").unwrap()
     } else {
@@ -93,8 +93,8 @@ fn nnet_train(
                     cost
                 );
                 pass += 1;
-                println!("{}", print_str);
                 if skip_prints_i >= skip_prints || pass == passes {
+                    println!("{}", print_str);
                     skip_prints_i = 0;
                 } else {
                     skip_prints_i += 1;

@@ -235,21 +235,6 @@ impl Simulation {
         grid.set_scale(0.1);
         window.scene.add(&grid);
 
-        let mbox1 = {
-            let geometry = three::Geometry::cuboid(0.01, 0.01, 0.01);
-            let material = three::material::Wireframe { color: 0x00FF00 };
-            window.factory.mesh(geometry, material)
-        };
-        mbox1.set_position([0.0, 0.0, 0.2]);
-        window.scene.add(&mbox1);
-        let mbox2 = {
-            let geometry = three::Geometry::cuboid(0.01, 0.01, 0.01);
-            let material = three::material::Wireframe { color: 0x00FF00 };
-            window.factory.mesh(geometry, material)
-        };
-        mbox2.set_position([0.0, 0.0, 0.4]);
-        window.scene.add(&mbox2);
-
         let hemi_light = window.factory.hemisphere_light(0xffffbb, 0x080802, 1.0);
         hemi_light.look_at([15.0, 35.0, 35.0], [0.0, 0.0, 2.0], None);
         window.scene.add(&hemi_light);
