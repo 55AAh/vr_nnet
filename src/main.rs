@@ -48,13 +48,14 @@ fn nnet_train(
     pause: u32,
     log: bool,
 ) {
-    let mut sample_iter = sample.get_iter();
     let mut avg_cost = AvgCost::new(100);
     let mut prev_position_guess = [0.0, 0.0, 0.0];
-    let mut prev_rotation_guess = (0.0, [1.0, 0.0, 0.0]);
+    let mut prev_rotation_guess = (0.0, [0.0, 0.0, 1.0]);
     let mut nnet_gradbuf = nnet.gen_gradbuf();
     let mut skip_prints = 0;
     let mut skip_prints_i = 0;
+    let mut sample_iter = sample.get_iter();
+    let mut mode: char = 'c';
     const PRINT_PERIOD_MILLIS: u32 = 100;
     let mut buf_writer = io::BufWriter::new(if log {
         File::create("passes_log.txt").unwrap()
@@ -69,29 +70,44 @@ fn nnet_train(
         let mut simulation = Simulation::new(model_path);
         let mut pass = 1;
         let mut last_pass_num: u32 = 0;
-        'main_loop: loop {
+        loop {
             let now = Instant::now();
-            let (position, rotation) = sample_iter.next().unwrap();
+            let (position, rotation) = match mode {
+                'r' => nnet::generate_random(),
+                's' => sample_iter.next().unwrap(),
+                'm' | 'c' => simulation.get_model_position(),
+                _ => ([0.0, 0.0, 0.0], (0.0, [0.0, 0.0, 1.0])),
+            };
             let points = three_sim::transform_points(&simulation.points, position, rotation);
-            let (position_guess, rotation_guess, cost) =
-                nnet.train(&points, position, rotation, &mut nnet_gradbuf, gradcoeff);
-            if pass % packet_size == 0 {
-                nnet.apply_gradbuf(&mut nnet_gradbuf, pass - last_pass_num);
-                last_pass_num = pass;
-            }
-            let mut print_str = format!(
-                "Pass {:^8} avg.cost: {:.10} cost: {:.10}",
-                pass,
-                avg_cost.add(cost),
-                cost
-            );
-            println!("{}", print_str);
-            if skip_prints_i >= skip_prints || pass == passes {
-                skip_prints_i = 0;
+            let (position_guess, rotation_guess) = if mode != 'c' {
+                let (position_guess, rotation_guess, cost) =
+                    nnet.train(&points, position, rotation, &mut nnet_gradbuf, gradcoeff);
+                if pass % packet_size == 0 {
+                    nnet.apply_gradbuf(&mut nnet_gradbuf, pass - last_pass_num);
+                    last_pass_num = pass;
+                }
+                let mut print_str = format!(
+                    "Pass {:^8} avg.cost: {:.10} cost: {:.10}",
+                    pass,
+                    avg_cost.add(cost),
+                    cost
+                );
+                pass += 1;
+                println!("{}", print_str);
+                if skip_prints_i >= skip_prints || pass == passes {
+                    skip_prints_i = 0;
+                } else {
+                    skip_prints_i += 1;
+                }
+                if log {
+                    print_str += "\n";
+                    buf_writer.write(print_str.as_bytes()).unwrap();
+                }
+                skip_prints = PRINT_PERIOD_MILLIS / now.elapsed().as_millis().max(1) as u32;
+                (position_guess, rotation_guess)
             } else {
-                skip_prints_i += 1;
-            }
-            skip_prints = PRINT_PERIOD_MILLIS / now.elapsed().as_millis().max(1) as u32;
+                (position, rotation)
+            };
             if !visualize_guess(
                 &mut simulation,
                 position,
@@ -101,31 +117,35 @@ fn nnet_train(
                 position_guess,
                 rotation_guess,
                 pause,
+                &mut mode,
             ) {
                 return;
             }
-            if log {
-                print_str += "\n";
-                buf_writer.write(print_str.as_bytes()).unwrap();
-            }
-            prev_position_guess = position_guess;
-            prev_rotation_guess = rotation_guess;
-            pass += 1;
-            let mut wt = 0;
-            while simulation.handle() {
-                if wt >= pause {
-                    continue 'main_loop;
-                }
-                wt += 1;
-            }
-            return;
+            let (new_prev_position_guess, new_prev_rotation_guess) = if mode == 'm' {
+                three_sim::transform_time(
+                    &prev_position_guess,
+                    prev_rotation_guess,
+                    &position_guess,
+                    rotation_guess,
+                    1.0 / pause as f64,
+                )
+            } else {
+                (position_guess, rotation_guess)
+            };
+            prev_position_guess = new_prev_position_guess;
+            prev_rotation_guess = new_prev_rotation_guess;
         }
     } else {
+        mode = if pick_yn("Use sample?") { 's' } else { 'r' };
         let (points, _) = three_sim::load_model_points(model_path);
         let mut last_pass_num: u32 = 0;
         for pass in 1..passes + 1 {
             let now = Instant::now();
-            let (position, rotation) = sample_iter.next().unwrap();
+            let (position, rotation) = match mode {
+                'r' => nnet::generate_random(),
+                's' => sample_iter.next().unwrap(),
+                _ => ([0.0, 0.0, 0.0], (0.0, [0.0, 0.0, 1.0])),
+            };
             let points = three_sim::transform_points(&points, position, rotation);
             let (_, _, cost) =
                 nnet.train(&points, position, rotation, &mut nnet_gradbuf, gradcoeff);
@@ -156,16 +176,28 @@ fn nnet_train(
     }
 }
 
-fn nnet_guess(model_path: &str, nnet: &NeuralNetwork, pause: u32) {
+fn nnet_guess(model_path: &str, nnet: &NeuralNetwork, sample: &three_sim::Sample, pause: u32) {
     let mut simulation = Simulation::new(model_path);
     let mut prev_position_guess = [0.0, 0.0, 0.0];
-    let mut prev_rotation_guess = (0.0, [1.0, 0.0, 0.0]);
-    'main_loop: loop {
-        let (position, rotation) = nnet::generate_random();
+    let mut prev_rotation_guess = (0.0, [0.0, 0.0, 1.0]);
+    let mut sample_iter = sample.get_iter();
+    let mut mode: char = 'c';
+    loop {
+        let (position, rotation) = match mode {
+            'r' => nnet::generate_random(),
+            's' => sample_iter.next().unwrap(),
+            'm' | 'c' => simulation.get_model_position(),
+            _ => ([0.0, 0.0, 0.0], (0.0, [0.0, 0.0, 1.0])),
+        };
         let points = three_sim::transform_points(&simulation.points, position, rotation);
-        let (position_guess, rotation_guess) = nnet.guess(&points);
-        let cost = NeuralNetwork::calc_cost(position, rotation, position_guess, rotation_guess);
-        println!("Cost: {}", cost);
+        let (position_guess, rotation_guess) = if mode != 'c' {
+            let (position_guess, rotation_guess) = nnet.guess(&points);
+            let cost = NeuralNetwork::calc_cost(position, rotation, position_guess, rotation_guess);
+            println!("Cost: {}", cost);
+            (position_guess, rotation_guess)
+        } else {
+            (position, rotation)
+        };
         if !visualize_guess(
             &mut simulation,
             position,
@@ -175,37 +207,38 @@ fn nnet_guess(model_path: &str, nnet: &NeuralNetwork, pause: u32) {
             position_guess,
             rotation_guess,
             pause,
+            &mut mode,
         ) {
             return;
         };
-        prev_position_guess = position_guess;
-        prev_rotation_guess = rotation_guess;
-        let mut wt = 0;
-        while simulation.handle() {
-            if wt >= pause {
-                continue 'main_loop;
-            }
-            wt += 1;
-        }
-        return;
+        let (new_prev_position_guess, new_prev_rotation_guess) = if mode == 'm' {
+            three_sim::transform_time(
+                &prev_position_guess,
+                prev_rotation_guess,
+                &position_guess,
+                rotation_guess,
+                1.0 / pause as f64,
+            )
+        } else {
+            (position_guess, rotation_guess)
+        };
+        prev_position_guess = new_prev_position_guess;
+        prev_rotation_guess = new_prev_rotation_guess;
     }
 }
 
-fn demo(model_path: &str, pause: u32, sample: Option<&three_sim::Sample>) {
+fn demo(model_path: &str, sample: &three_sim::Sample, pause: u32) {
     let mut simulation = Simulation::new(model_path);
     let mut prev_position = [0.0, 0.0, 0.0];
-    let mut prev_rotation = (0.0, [1.0, 0.0, 0.0]);
-    let empty_sample = three_sim::Sample::new_empty();
-    let mut sample_iter = if sample.is_none() {
-        empty_sample.get_iter()
-    } else {
-        sample.unwrap().get_iter()
-    };
-    'main_loop: loop {
-        let (position, rotation) = if sample.is_none() {
-            nnet::generate_random()
-        } else {
-            sample_iter.next().unwrap()
+    let mut prev_rotation = (0.0, [0.0, 0.0, 1.0]);
+    let mut sample_iter = sample.get_iter();
+    let mut mode: char = 'c';
+    loop {
+        let (position, rotation) = match mode {
+            'r' => nnet::generate_random(),
+            's' => sample_iter.next().unwrap(),
+            'm' | 'c' => simulation.get_model_position(),
+            _ => ([0.0, 0.0, 0.0], (0.0, [0.0, 0.0, 1.0])),
         };
         if !visualize_guess(
             &mut simulation,
@@ -216,20 +249,23 @@ fn demo(model_path: &str, pause: u32, sample: Option<&three_sim::Sample>) {
             position,
             rotation,
             pause,
+            &mut mode,
         ) {
             return;
         };
-        prev_position = position;
-        prev_rotation = rotation;
-        let mut wt = 0;
-        let wt_steps = 20;
-        while simulation.handle() {
-            if wt >= wt_steps {
-                continue 'main_loop;
-            }
-            wt += 1;
-        }
-        return;
+        let (new_prev_position, new_prev_rotation) = if mode == 'm' {
+            three_sim::transform_time(
+                &prev_position,
+                prev_rotation,
+                &position,
+                rotation,
+                1.0 / (pause as f64),
+            )
+        } else {
+            (position, rotation)
+        };
+        prev_position = new_prev_position;
+        prev_rotation = new_prev_rotation;
     }
 }
 
@@ -242,6 +278,7 @@ fn visualize_guess(
     position_guess: [f64; 3],
     rotation_guess: (f64, [f64; 3]),
     pause: u32,
+    mode: &mut char,
 ) -> bool {
     simulation.points_group.set_transform(
         [position[0] as f32, position[1] as f32, position[2] as f32],
@@ -256,7 +293,9 @@ fn visualize_guess(
 
     let mut t = 0;
 
-    while simulation.handle() {
+    while simulation.handle(*mode != 'm') {
+        simulation.update_mode(mode);
+
         let (model_position, model_rotation) = three_sim::transform_time(
             &prev_position_guess,
             prev_rotation_guess,
@@ -264,6 +303,29 @@ fn visualize_guess(
             rotation_guess,
             t as f64 / pause as f64,
         );
+
+        let pos_text = format!(
+            "   Model\nX {}\nY {}\nZ {}\n\nW {}\nI {}\nJ {}\nK {}\n\n   Guess\nX {}\nY {}\nZ {}\n\nW {}\nI {}\nJ {}\nK {}",
+            model_position[0],
+            model_position[1],
+            model_position[2],
+            model_rotation.0,
+            model_rotation.1[0],
+            model_rotation.1[1],
+            model_rotation.1[2],
+            position_guess[0],
+            position_guess[1],
+            position_guess[2],
+            rotation_guess.0,
+            rotation_guess.1[0],
+            rotation_guess.1[1],
+            rotation_guess.1[2]
+        );
+        simulation.set_pos_text(if simulation.pos_text_visible {
+            pos_text.as_str()
+        } else {
+            "*"
+        });
 
         simulation.model_group.set_transform(
             [
@@ -280,8 +342,16 @@ fn visualize_guess(
             1.0,
         );
 
-        if t >= pause {
-            return true;
+        if t >= pause || *mode == 'm' {
+            let mut wt = 0;
+            while simulation.handle(*mode != 'm') {
+                simulation.update_mode(mode);
+                if wt >= pause || *mode == 'm' {
+                    return true;
+                }
+                wt += 1;
+            }
+            return false;
         }
         t += 1;
     }
@@ -325,15 +395,12 @@ fn pick_model_nnet() -> Option<(String, NeuralNetwork)> {
             println!("Fetching nnet from model...");
             let lines = three_sim::get_model_nnet(&model_path);
             if lines.len() == 0 {
-                println!("No nnet in model. Do you want to create one? (y/n)");
-                if readline() == "y" {
+                if pick_yn("No nnet in model. Do you want to create one?") {
                     println!("Creating nnet...");
                     let (model_points, _) = three_sim::load_model_points(&model_path);
                     if let Some(geometry) = pick_geometry(model_points.len() as u32) {
                         let nnet = nnet::NeuralNetwork::new(geometry);
-                        println!("Nnet created, saving model...");
-                        three_sim::write_model_nnet(&model_path, nnet::save_nnet(&nnet));
-                        println!("Model saved.");
+                        println!("Nnet created.");
                         return Some((model_path, nnet));
                     }
                 }
@@ -366,12 +433,11 @@ fn pick_packet_size(packet_size: u32) -> u32 {
     }
 }
 
-fn delete_nnet(model_path: &str) {
-    println!(
-        "Are you really want to delete nnet from \"{}\"? (y/n)",
+fn pick_delete_nnet(model_path: &str) {
+    if pick_yn(&format!(
+        "Do you really want to delete nnet from \"{}\" and save model?",
         model_path
-    );
-    if readline() == "y" {
+    )) {
         println!("Saving model...");
         three_sim::write_model_nnet(&model_path, vec![]);
         println!("Model saved.");
@@ -438,23 +504,8 @@ fn pick_pause(pause: u32) -> u32 {
     }
 }
 
-fn pick_log() -> bool {
-    println!("Enable passes logging? (y/n)");
-    readline() == "y"
-}
-
-fn pick_demo(model_path: &str, pause: u32, sample: &three_sim::Sample) {
-    println!("Use sample? (y/n)");
-    if readline() == "y" {
-        demo(model_path, pause, Some(sample));
-    } else {
-        demo(model_path, pause, None);
-    }
-}
-
-fn save_model_nnet(model_path: &str, nnet: &NeuralNetwork) -> bool {
-    println!("Save model \"{}\"? (y/n)", model_path);
-    if readline() == "y" {
+fn pick_save_model_nnet(model_path: &str, nnet: &NeuralNetwork) -> bool {
+    if pick_yn(&format!("Save model \"{}\"?", model_path)) {
         println!("Saving model...");
         three_sim::write_model_nnet(model_path, nnet::save_nnet(nnet));
         println!("Model saved.");
@@ -465,6 +516,17 @@ fn save_model_nnet(model_path: &str, nnet: &NeuralNetwork) -> bool {
 
 fn readline() -> String {
     stdin().lock().lines().next().unwrap().unwrap()
+}
+
+fn pick_yn(message: &str) -> bool {
+    loop {
+        println!("{} (y/n)", message);
+        match readline().as_str() {
+            "y" | "н" => return true,
+            "n" | "т" => return false,
+            _ => {}
+        }
+    }
 }
 
 fn main() {
@@ -506,7 +568,7 @@ fn main() {
                             packet_size,
                             pick_passes_count(),
                             gradcoeff,
-                            pause,
+                            pause * 50,
                             log,
                         );
                         changed = true;
@@ -519,20 +581,20 @@ fn main() {
                             packet_size,
                             0,
                             gradcoeff,
-                            pause,
+                            pause * 50,
                             log,
                         );
                         changed = true;
                     }
-                    "g" => nnet_guess(&model_path, &mut nnet, pause),
+                    "g" => nnet_guess(&model_path, &mut nnet, &sample, pause * 50),
                     "c" => {
                         if let Some((new_model_path, new_nnet)) = pick_model_nnet() {
                             model_path = new_model_path;
                             nnet = new_nnet;
                         }
                     }
-                    "s" => changed = !save_model_nnet(&model_path, &nnet),
-                    "d" => delete_nnet(&model_path),
+                    "s" => changed = !pick_save_model_nnet(&model_path, &nnet),
+                    "d" => pick_delete_nnet(&model_path),
                     "t" => {
                         if let Some(s) = pick_trajectory() {
                             sample = s;
@@ -541,11 +603,11 @@ fn main() {
                     "k" => packet_size = pick_packet_size(packet_size),
                     "f" => gradcoeff = pick_gradcoeff(gradcoeff),
                     "p" => pause = pick_pause(pause),
-                    "n" => log = pick_log(),
-                    "m" => pick_demo(&model_path, pause, &sample),
+                    "n" => log = pick_yn("Enable passes logging?"),
+                    "m" => demo(&model_path, &sample, pause * 50),
                     "e" => {
                         if changed {
-                            save_model_nnet(&model_path, &nnet);
+                            pick_save_model_nnet(&model_path, &nnet);
                         }
                         return;
                     }

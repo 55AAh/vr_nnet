@@ -10,4 +10,4 @@ def add(f, pos, rot):
 
 with open("sample1.txt", "w") as f:
     for c in range(1000):
-        add(f, [math.sin(c/3), math.cos(c/2), math.sin(c/5)], (math.sin(c / 10.0), [1.0, 0.0, 0.0]))
+        add(f, [math.sin(c/30), 0, 0], (0, [0.0, 0.0, 1.0]))

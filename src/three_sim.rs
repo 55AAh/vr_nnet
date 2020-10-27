@@ -4,29 +4,7 @@ use std::{
     io::{self, BufRead, Write},
     time::Instant,
 };
-use three::{camera::Camera, controls, material, Geometry, Group, Object, Window};
-
-pub struct Simulation {
-    window: Window,
-    last_frame: Instant,
-    deltaframe_ms: u32,
-    camera: Camera,
-    controls: controls::Orbit,
-    pub model_group: Group,
-    pub points_group: Group,
-    pub points: Vec<[f64; 3]>,
-}
-
-/*pub fn _points_mean(points: &Vec<[f64; 3]>) -> [f64; 3] {
-    let n = points.len();
-    points.iter().fold([0.0, 0.0, 0.0], |acc, point| {
-        [
-            acc[0] + point[0] / n as f64,
-            acc[1] + point[1] / n as f64,
-            acc[2] + point[2] / n as f64,
-        ]
-    })
-}*/
+use three::{camera::Camera, material, Geometry, Group, Object, Text, Window};
 
 pub struct Sample(Vec<([f64; 3], (f64, [f64; 3]))>);
 
@@ -58,10 +36,6 @@ impl Sample {
             ))
         }
         Some(Sample(samples))
-    }
-
-    pub fn new_empty() -> Sample {
-        Sample(vec![])
     }
 
     pub fn get_iter(
@@ -116,7 +90,7 @@ pub fn transform_points(
         .collect()
 }
 
-const MODEL_SCALE_FACTOR: f64 = 0.01;
+const MODEL_SCALE_FACTOR: f64 = 0.05;
 
 pub fn load_model_points(model_path: &str) -> (Vec<[f64; 3]>, [f64; 3]) {
     let (mut models, _) = tobj::load_obj(model_path, false).unwrap();
@@ -189,6 +163,26 @@ pub fn write_model_nnet(model_path: &str, lines: Vec<String>) {
         .unwrap();
 }
 
+pub struct Simulation {
+    window: Window,
+    pos_text: Text,
+    pub pos_text_visible: bool,
+    pos_text_visible_b: bool,
+    last_frame: Instant,
+    deltaframe_ms: u32,
+    camera: Camera,
+    camera_zoom: f32,
+    camera_rot: f32,
+    wheel_pos: f32,
+    wheel_mult: f32,
+    grid: Group,
+    grid_visible: bool,
+    grid_visible_b: bool,
+    pub model_group: Group,
+    pub points_group: Group,
+    pub points: Vec<[f64; 3]>,
+}
+
 impl Simulation {
     fn load_model(
         window: &mut Window,
@@ -201,11 +195,6 @@ impl Simulation {
             panic!("Model should have one group!");
         }
         let (_, group_map) = group_maps.drain().next().unwrap();
-        /*meshes[0].set_material(material::Basic {
-            color: 0x00ff00,
-            map: None,
-        });*/
-        //meshes[0].set_material(material::Wireframe { color: 0x00ff00 });
         group_map.set_scale(MODEL_SCALE_FACTOR as f32);
         model_group.add(&group_map);
 
@@ -235,36 +224,35 @@ impl Simulation {
 
     pub fn new(model_path: &str) -> Self {
         let mut window = Window::new("vr_nnet");
-        let camera = window.factory.perspective_camera(60.0, 1.0..1000.0);
-        let controls = controls::Orbit::builder(&camera)
-            .position([0.0, 0.0, 5.0])
-            .target([0.0, 0.0, 0.0])
-            .up([0.0, 1.0, 0.0])
-            .build();
+        let camera = window.factory.perspective_camera(60.0, 0.0001..1000.0);
+
+        let font = window.factory.load_font_karla();
+        let pos_text = window.factory.ui_text(&font, "");
+
+        let (mut group_maps, meshes) = window.factory.load_obj("Plane.obj");
+        let (_, grid) = group_maps.drain().next().unwrap();
+        meshes[0].set_material(material::Wireframe { color: 0xffffff });
+        grid.set_scale(0.1);
+        window.scene.add(&grid);
+
+        let mbox1 = {
+            let geometry = three::Geometry::cuboid(0.01, 0.01, 0.01);
+            let material = three::material::Wireframe { color: 0x00FF00 };
+            window.factory.mesh(geometry, material)
+        };
+        mbox1.set_position([0.0, 0.0, 0.2]);
+        window.scene.add(&mbox1);
+        let mbox2 = {
+            let geometry = three::Geometry::cuboid(0.01, 0.01, 0.01);
+            let material = three::material::Wireframe { color: 0x00FF00 };
+            window.factory.mesh(geometry, material)
+        };
+        mbox2.set_position([0.0, 0.0, 0.4]);
+        window.scene.add(&mbox2);
 
         let hemi_light = window.factory.hemisphere_light(0xffffbb, 0x080802, 1.0);
         hemi_light.look_at([15.0, 35.0, 35.0], [0.0, 0.0, 2.0], None);
         window.scene.add(&hemi_light);
-
-        let grid_group = window.factory.group();
-        for i in -20..21 {
-            let grid_z = {
-                let geometry = three::Geometry::plane(4.0, 0.001);
-                let material = three::material::Wireframe { color: 0xc8bfe7 };
-                window.factory.mesh(geometry, material)
-            };
-            grid_z.set_position([0.0, i as f32 / 10.0, 0.0]);
-            grid_group.add(&grid_z);
-
-            let grid_y = {
-                let geometry = three::Geometry::plane(0.001, 4.0);
-                let material = three::material::Wireframe { color: 0xc8bfe7 };
-                window.factory.mesh(geometry, material)
-            };
-            grid_y.set_position([i as f32 / 10.0, 0.0, 0.0]);
-            grid_group.add(&grid_y);
-        }
-        window.scene.add(&grid_group);
 
         let root = window.factory.group();
         window.scene.add(&root);
@@ -272,23 +260,149 @@ impl Simulation {
         let (model_group, points_group, points) =
             Simulation::load_model(&mut window, &root, model_path);
 
-        Simulation {
+        let mut simulation = Simulation {
             window,
+            pos_text,
+            pos_text_visible: false,
+            pos_text_visible_b: false,
             last_frame: Instant::now(),
-            deltaframe_ms: 0,
+            deltaframe_ms: 70,
             camera,
-            controls,
+            camera_rot: 0.0,
+            camera_zoom: 5.0,
+            wheel_pos: 0.0,
+            wheel_mult: 1.0,
+            grid,
+            grid_visible: true,
+            grid_visible_b: false,
             model_group,
             points_group,
             points,
+        };
+        simulation.update_camera();
+        simulation
+    }
+
+    fn update_camera(&mut self) {
+        self.camera.look_at(
+            [
+                self.camera_rot.sin() * self.camera_zoom,
+                self.camera_rot.cos() * self.camera_zoom,
+                3.0,
+            ],
+            [0.0, 0.0, 0.0],
+            None,
+        );
+    }
+
+    pub fn mouse_movement(&self) -> [f32; 2] {
+        self.window
+            .input
+            .mouse_movements()
+            .iter()
+            .fold([0.0, 0.0], |acc, new| [acc[0] + new.x, acc[0] + new.y])
+    }
+
+    pub fn wheel_movement(&self) -> f32 {
+        self.window
+            .input
+            .mouse_wheel_movements()
+            .iter()
+            .sum::<f32>()
+    }
+
+    pub fn update_mode(&self, mode: &mut char) {
+        if self.window.input.hit(three::Key::R) {
+            *mode = 'r';
+        }
+        if self.window.input.hit(three::Key::S) {
+            *mode = 's';
+        }
+        if self.window.input.hit(three::Key::M) {
+            *mode = 'm';
+        }
+        if self.window.input.hit(three::Key::C) {
+            *mode = 'c';
         }
     }
 
-    pub fn handle(&mut self) -> bool {
+    pub fn mouse_position(&self) -> [f32; 2] {
+        [
+            (self.window.input.mouse_pos().x / self.window.size().x * 2.0 - 1.0) * self.camera_zoom,
+            (self.window.input.mouse_pos().y / self.window.size().y * 2.0 - 1.0) * self.camera_zoom,
+        ]
+    }
+
+    pub fn get_model_position(&mut self) -> ([f64; 3], (f64, [f64; 3])) {
+        if !self
+            .window
+            .input
+            .hit(three::Button::Mouse(three::MouseButton::Left))
+        {
+            self.wheel_pos +=
+                self.wheel_movement() * self.window.input.delta_time() / 100000.0 * self.wheel_mult;
+        }
+        (
+            [
+                -self.mouse_position()[0] as f64,
+                self.mouse_position()[1] as f64,
+                self.wheel_pos as f64,
+            ],
+            (0.0, [0.0, 0.0, 1.0]),
+        )
+    }
+
+    pub fn set_pos_text(&mut self, text: &str) {
+        self.pos_text.set_text(text);
+    }
+
+    pub fn handle(&mut self, move_camera: bool) -> bool {
         if self.last_frame.elapsed().as_millis() as u32 > self.deltaframe_ms {
             self.last_frame = Instant::now();
 
-            self.controls.update(&self.window.input);
+            if self.window.input.hit(three::Key::T) {
+                if !self.pos_text_visible_b {
+                    self.pos_text_visible = !self.pos_text_visible;
+                }
+                self.pos_text_visible_b = true;
+            } else {
+                self.pos_text_visible_b = false;
+            }
+
+            if self.window.input.hit(three::Key::G) {
+                if !self.grid_visible_b {
+                    self.grid_visible = !self.grid_visible;
+                    self.grid.set_visible(self.grid_visible);
+                }
+                self.grid_visible_b = true;
+            } else {
+                self.grid_visible_b = false;
+            }
+
+            if move_camera {
+                if self
+                    .window
+                    .input
+                    .hit(three::Button::Mouse(three::MouseButton::Left))
+                {
+                    self.camera_rot += self.mouse_movement()[0] / 300.0;
+                    self.camera_zoom -= self.wheel_movement() / 100.0;
+                    self.camera_zoom = self.camera_zoom.max(1.0).min(10.0);
+                }
+                self.update_camera();
+            }
+
+            if self.window.input.hit(three::Key::PageUp) {
+                self.wheel_mult *= 1.1;
+            } else if self.window.input.hit(three::Key::PageDown) {
+                self.wheel_mult /= 1.1;
+            }
+            if self.window.input.hit(three::Key::PageUp)
+                && self.window.input.hit(three::Key::PageDown)
+            {
+                self.wheel_mult = 1.0;
+            }
+
             if self.window.input.hit(three::Key::Equals) {
                 self.deltaframe_ms += 1;
             } else if self.window.input.hit(three::Key::Minus) {
@@ -296,7 +410,7 @@ impl Simulation {
                     self.deltaframe_ms -= 1;
                 }
             } else if self.window.input.hit(three::Key::Key0) {
-                self.deltaframe_ms = 0;
+                self.deltaframe_ms = 70;
             }
             self.window.render(&self.camera);
             if !self.window.update() {
