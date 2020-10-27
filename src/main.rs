@@ -2,10 +2,13 @@ mod nnet;
 mod three_sim;
 use nnet::NeuralNetwork;
 use queues::*;
-use std::time::Instant;
 use std::{
+    fs::File,
+    io,
+    io::Write,
     io::{stdin, BufRead},
     path::Path,
+    time::Instant,
 };
 use three::Object;
 use three_sim::Simulation;
@@ -93,6 +96,7 @@ fn nnet_train(
             return;
         }
     } else {
+        let mut buf_writer = io::BufWriter::new(File::create("passes_log.txt").unwrap());
         let (points, _) = three_sim::load_model_points(model_path);
         let mut skip_prints = 0;
         let mut skip_prints_i = 0;
@@ -108,20 +112,23 @@ fn nnet_train(
                 nnet.apply_gradbuf(&nnet_gradbuf, pass - last_pass_num);
                 last_pass_num = pass;
             }
+            let mut print_str = format!(
+                "Pass {:^8}/{:^8} ({:^8.3}%) avg.cost: {:.10} cost: {:.10}",
+                pass,
+                passes,
+                pass as f64 / passes as f64 * 100.0,
+                avg_cost.add(cost),
+                cost
+            );
             if skip_prints_i >= skip_prints || pass == passes {
-                println!(
-                    "Pass {:^8}/{:^8} ({:^8.3}%) avg.cost: {:.10} cost: {:.10}",
-                    pass,
-                    passes,
-                    pass as f64 / passes as f64 * 100.0,
-                    avg_cost.add(cost),
-                    cost
-                );
+                println!("{}", print_str);
                 skip_prints_i = 0;
             } else {
                 skip_prints_i += 1;
             }
             skip_prints = PRINT_PERIOD_MILLIS / now.elapsed().as_millis().max(1) as u32;
+            print_str += "\n";
+            buf_writer.write(print_str.as_bytes()).unwrap();
         }
     }
 }
