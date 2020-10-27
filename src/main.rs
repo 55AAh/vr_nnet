@@ -46,31 +46,52 @@ fn nnet_train(
     passes: u32,
     gradcoeff: f64,
     pause: u32,
+    log: bool,
 ) {
     let mut sample_iter = sample.get_iter();
     let mut avg_cost = AvgCost::new(100);
     let mut prev_position_guess = [0.0, 0.0, 0.0];
     let mut prev_rotation_guess = (0.0, [1.0, 0.0, 0.0]);
     let mut nnet_gradbuf = nnet.gen_gradbuf();
+    let mut skip_prints = 0;
+    let mut skip_prints_i = 0;
+    const PRINT_PERIOD_MILLIS: u32 = 100;
+    let mut buf_writer = io::BufWriter::new(if log {
+        File::create("passes_log.txt").unwrap()
+    } else {
+        if let Ok(i) = File::open("passes_log.txt") {
+            i
+        } else {
+            File::create("passes_log.txt").unwrap()
+        }
+    });
     if passes == 0 {
         let mut simulation = Simulation::new(model_path);
         let mut pass = 1;
         let mut last_pass_num: u32 = 0;
         'main_loop: loop {
+            let now = Instant::now();
             let (position, rotation) = sample_iter.next().unwrap();
             let points = three_sim::transform_points(&simulation.points, position, rotation);
             let (position_guess, rotation_guess, cost) =
                 nnet.train(&points, position, rotation, &mut nnet_gradbuf, gradcoeff);
             if pass % packet_size == 0 {
-                nnet.apply_gradbuf(&nnet_gradbuf, pass - last_pass_num);
+                nnet.apply_gradbuf(&mut nnet_gradbuf, pass - last_pass_num);
                 last_pass_num = pass;
             }
-            println!(
+            let mut print_str = format!(
                 "Pass {:^8} avg.cost: {:.10} cost: {:.10}",
                 pass,
                 avg_cost.add(cost),
                 cost
             );
+            println!("{}", print_str);
+            if skip_prints_i >= skip_prints || pass == passes {
+                skip_prints_i = 0;
+            } else {
+                skip_prints_i += 1;
+            }
+            skip_prints = PRINT_PERIOD_MILLIS / now.elapsed().as_millis().max(1) as u32;
             if !visualize_guess(
                 &mut simulation,
                 position,
@@ -82,7 +103,11 @@ fn nnet_train(
                 pause,
             ) {
                 return;
-            };
+            }
+            if log {
+                print_str += "\n";
+                buf_writer.write(print_str.as_bytes()).unwrap();
+            }
             prev_position_guess = position_guess;
             prev_rotation_guess = rotation_guess;
             pass += 1;
@@ -96,11 +121,7 @@ fn nnet_train(
             return;
         }
     } else {
-        let mut buf_writer = io::BufWriter::new(File::create("passes_log.txt").unwrap());
         let (points, _) = three_sim::load_model_points(model_path);
-        let mut skip_prints = 0;
-        let mut skip_prints_i = 0;
-        const PRINT_PERIOD_MILLIS: u32 = 100;
         let mut last_pass_num: u32 = 0;
         for pass in 1..passes + 1 {
             let now = Instant::now();
@@ -109,7 +130,7 @@ fn nnet_train(
             let (_, _, cost) =
                 nnet.train(&points, position, rotation, &mut nnet_gradbuf, gradcoeff);
             if pass % packet_size == 0 || pass == passes {
-                nnet.apply_gradbuf(&nnet_gradbuf, pass - last_pass_num);
+                nnet.apply_gradbuf(&mut nnet_gradbuf, pass - last_pass_num);
                 last_pass_num = pass;
             }
             let mut print_str = format!(
@@ -127,8 +148,10 @@ fn nnet_train(
                 skip_prints_i += 1;
             }
             skip_prints = PRINT_PERIOD_MILLIS / now.elapsed().as_millis().max(1) as u32;
-            print_str += "\n";
-            buf_writer.write(print_str.as_bytes()).unwrap();
+            if log {
+                print_str += "\n";
+                buf_writer.write(print_str.as_bytes()).unwrap();
+            }
         }
     }
 }
@@ -415,6 +438,11 @@ fn pick_pause(pause: u32) -> u32 {
     }
 }
 
+fn pick_log() -> bool {
+    println!("Enable passes logging? (y/n)");
+    readline() == "y"
+}
+
 fn pick_demo(model_path: &str, pause: u32, sample: &three_sim::Sample) {
     println!("Use sample? (y/n)");
     if readline() == "y" {
@@ -449,6 +477,7 @@ fn main() {
             let mut gradcoeff = 0.000001;
             let mut pause: u32 = 10;
             let mut changed = false;
+            let mut log = true;
             loop {
                 println!(
                     "
@@ -459,9 +488,11 @@ fn main() {
                 (s)ave model/nnet
                 (d)elete nnet
                 (t)rajectory file
+                set de(l)taframe
                 set pac(k)et size
                 set gradcoef(f)
                 set (p)ause
+                set loggi(n)g
                 (m)ove test
                 (e)xit
                 "
@@ -476,6 +507,7 @@ fn main() {
                             pick_passes_count(),
                             gradcoeff,
                             pause,
+                            log,
                         );
                         changed = true;
                     }
@@ -488,6 +520,7 @@ fn main() {
                             0,
                             gradcoeff,
                             pause,
+                            log,
                         );
                         changed = true;
                     }
@@ -508,6 +541,7 @@ fn main() {
                     "k" => packet_size = pick_packet_size(packet_size),
                     "f" => gradcoeff = pick_gradcoeff(gradcoeff),
                     "p" => pause = pick_pause(pause),
+                    "n" => log = pick_log(),
                     "m" => pick_demo(&model_path, pause, &sample),
                     "e" => {
                         if changed {

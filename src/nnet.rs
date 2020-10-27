@@ -136,16 +136,18 @@ impl NeuralNetwork {
         (position_guess, rotation_guess, cost)
     }
 
-    pub fn apply_gradbuf(&mut self, gradbuf: &NeuralNetwork, count: u32) {
+    pub fn apply_gradbuf(&mut self, gradbuf: &mut NeuralNetwork, count: u32) {
         for t in 0..self.c.len() {
             for ((c, b), (gc, gb)) in self.c[t]
                 .iter_mut()
                 .zip(self.b[t].iter_mut())
-                .zip(gradbuf.c[t].iter().zip(gradbuf.b[t].iter()))
+                .zip(gradbuf.c[t].iter_mut().zip(gradbuf.b[t].iter_mut()))
             {
                 *b -= *gb / count as f64;
-                for (cx, gcx) in c.iter_mut().zip(gc.iter()) {
+                *gb = 0.0;
+                for (cx, gcx) in c.iter_mut().zip(gc.iter_mut()) {
                     *cx -= *gcx / count as f64;
+                    *gcx = 0.0;
                 }
             }
         }

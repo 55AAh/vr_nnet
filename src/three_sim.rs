@@ -2,11 +2,14 @@ use cgmath::Quaternion;
 use std::{
     fs::File,
     io::{self, BufRead, Write},
+    time::Instant,
 };
 use three::{camera::Camera, controls, material, Geometry, Group, Object, Window};
 
 pub struct Simulation {
     window: Window,
+    last_frame: Instant,
+    deltaframe_ms: u32,
     camera: Camera,
     controls: controls::Orbit,
     pub model_group: Group,
@@ -234,14 +237,34 @@ impl Simulation {
         let mut window = Window::new("vr_nnet");
         let camera = window.factory.perspective_camera(60.0, 1.0..1000.0);
         let controls = controls::Orbit::builder(&camera)
-            .position([0.0, 2.0, 5.0])
+            .position([0.0, 0.0, 5.0])
             .target([0.0, 0.0, 0.0])
-            .up([0.0, 0.0, -1.0])
+            .up([0.0, 1.0, 0.0])
             .build();
 
         let hemi_light = window.factory.hemisphere_light(0xffffbb, 0x080802, 1.0);
         hemi_light.look_at([15.0, 35.0, 35.0], [0.0, 0.0, 2.0], None);
         window.scene.add(&hemi_light);
+
+        let grid_group = window.factory.group();
+        for i in -20..21 {
+            let grid_z = {
+                let geometry = three::Geometry::plane(4.0, 0.001);
+                let material = three::material::Wireframe { color: 0xc8bfe7 };
+                window.factory.mesh(geometry, material)
+            };
+            grid_z.set_position([0.0, i as f32 / 10.0, 0.0]);
+            grid_group.add(&grid_z);
+
+            let grid_y = {
+                let geometry = three::Geometry::plane(0.001, 4.0);
+                let material = three::material::Wireframe { color: 0xc8bfe7 };
+                window.factory.mesh(geometry, material)
+            };
+            grid_y.set_position([i as f32 / 10.0, 0.0, 0.0]);
+            grid_group.add(&grid_y);
+        }
+        window.scene.add(&grid_group);
 
         let root = window.factory.group();
         window.scene.add(&root);
@@ -251,6 +274,8 @@ impl Simulation {
 
         Simulation {
             window,
+            last_frame: Instant::now(),
+            deltaframe_ms: 0,
             camera,
             controls,
             model_group,
@@ -260,8 +285,24 @@ impl Simulation {
     }
 
     pub fn handle(&mut self) -> bool {
-        self.controls.update(&self.window.input);
-        self.window.render(&self.camera);
-        self.window.update() && !self.window.input.hit(three::KEY_ESCAPE)
+        if self.last_frame.elapsed().as_millis() as u32 > self.deltaframe_ms {
+            self.last_frame = Instant::now();
+
+            self.controls.update(&self.window.input);
+            if self.window.input.hit(three::Key::Equals) {
+                self.deltaframe_ms += 1;
+            } else if self.window.input.hit(three::Key::Minus) {
+                if self.deltaframe_ms > 0 {
+                    self.deltaframe_ms -= 1;
+                }
+            } else if self.window.input.hit(three::Key::Key0) {
+                self.deltaframe_ms = 0;
+            }
+            self.window.render(&self.camera);
+            if !self.window.update() {
+                return false;
+            }
+        }
+        !self.window.input.hit(three::KEY_ESCAPE)
     }
 }
