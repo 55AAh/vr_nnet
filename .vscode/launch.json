@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\target\\debug\\vr_nnet",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "externalConsole": true,
+        },
+        {
+            "name": "Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\target\\release\\vr_nnet",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build release",
+            "externalConsole": true,
+        },
+    ]
+}

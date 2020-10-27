@@ -1,0 +1,15 @@
+[package]
+name = "vr_nnet"
+version = "0.1.0"
+authors = ["55AAh <kostya.kulik@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+three = "0.4.0"
+mint = "0.5.5"
+tobj = "2.0.2"
+quaternion = "0.4.1"
+cgmath = "0.17.0"
+arrayvec = "0.5.2"
+rand = "0.7.3"
+queues = "1.1.0"
