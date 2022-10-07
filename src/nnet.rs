@@ -20,14 +20,14 @@ impl NeuralNetwork {
                             } else {
                                 geometry[i - 1]
                             })
-                                .map(|_| rng.gen_range(-1.0, 1.0))
+                                .map(|_| rng.gen_range(-1.0..1.0))
                                 .collect()
                         })
                         .collect()
                 })
                 .collect(),
             b: (1..geometry.len())
-                .map(|i| (0..geometry[i]).map(|_| rng.gen_range(-1.0, 1.0)).collect())
+                .map(|i| (0..geometry[i]).map(|_| rng.gen_range(-1.0..1.0)).collect())
                 .collect(),
         }
     }
@@ -198,20 +198,20 @@ impl NeuralNetwork {
 pub fn generate_random() -> ([f64; 3], (f64, [f64; 3])) {
     let mut rng = rand::thread_rng();
     let axis = [
-        rng.gen_range(-1.0, 1.0),
-        rng.gen_range(-1.0, 1.0),
-        rng.gen_range(-1.0, 1.0),
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
     ];
     let len = ((axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]) as f64).sqrt();
     (
         [
-            rng.gen_range(-2.0, 2.0),
-            rng.gen_range(-2.0, 2.0),
-            rng.gen_range(-1.0, 1.0),
+            rng.gen_range(-2.0..2.0),
+            rng.gen_range(-2.0..2.0),
+            rng.gen_range(-1.0..1.0),
         ],
         quaternion::axis_angle(
             [axis[0] / len, axis[1] / len, axis[2] / len],
-            PI * (1.0 + rng.gen_range(-0.3, 0.3)),
+            PI * (1.0 + rng.gen_range(-0.3..0.3)),
         ),
     )
 }
