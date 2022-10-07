@@ -289,4 +289,3 @@ pub fn save_nnet(nnet: &NeuralNetwork) -> Vec<String> {
     }
     lines
 }
-git 
