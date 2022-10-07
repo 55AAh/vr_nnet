@@ -93,7 +93,7 @@ pub fn transform_points(
 const MODEL_SCALE_FACTOR: f64 = 0.05;
 
 pub fn load_model_points(model_path: &str) -> (Vec<[f64; 3]>, [f64; 3]) {
-    let (mut models, _) = tobj::load_obj(model_path, false).unwrap();
+    let (mut models, _) = tobj::load_obj(model_path, &Default::default()).unwrap();
     let mut mean = [0.0, 0.0, 0.0];
     let mut vertices = Vec::new();
     for vertex in models.drain(..).next().unwrap().mesh.positions.chunks(3) {
