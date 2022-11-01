@@ -1337,9 +1337,9 @@ dependencies = [
 
 [[package]]
 name = "quaternion"
-version = "0.4.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "098443236d1445368525aa1874295cb9d9fc7699b52907c78692f0b18bd8c216"
+checksum = "f228fdb4cf3d4f76c98dc318b73f23df2bd7cbed8319e9ee28696aaf4737c0b3"
 dependencies = [
  "vecmath",
 ]
