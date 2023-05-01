@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 three = "0.4.0"
 mint = "0.5.5"
-tobj = "3.2.3"
+tobj = "4.0.0"
 quaternion = "1.0.0"
 cgmath = "0.18.0"
 arrayvec = "0.7.2"
